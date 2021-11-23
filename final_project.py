@@ -136,7 +136,7 @@ class Run:
         start_y = 300 - startCoords[1]*100
 
         self.rrt.build((100, 250), 3000, 10)
-        x_goal = self.rrt.nearest_neighbor((250, 250))
+        x_goal = self.rrt.nearest_neighbor((150, 30))
         path = self.rrt.shortest_path(x_goal)
 
         for v in self.rrt.T:
@@ -160,9 +160,11 @@ class Run:
         self.odometry.x = 1
         self.odometry.y = 0.5
         self.odometry.theta = 0
-        base_speed = 100
+        base_speed = 75
 
         print("number of coords:", len(path))
+        num_points = 0
+        self.take_measurements()
         for p in path:
             #print(p.state)
             goal_x = p.state[0] / 100.0
@@ -171,7 +173,12 @@ class Run:
              # taken from lab 8&9 solution
             self.visualize()
             # self.pf._pos = 0
-            self.take_measurements()
+            if num_points == 3:
+                num_points = 0
+                self.create.drive_direct(0, 0)
+                self.take_measurements()
+            else:
+                num_points += 1
             self.go_to_goal(goal_x, goal_y)
             # self.take_measurements()
             # while True:
