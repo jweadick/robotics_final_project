@@ -7,6 +7,7 @@ import rrt_map
 import particle_filter
 import rrt
 import numpy as np
+import pdb
 
 
 
@@ -32,7 +33,7 @@ class Run:
         self.pidTheta = pid_controller.PIDController(200, 0, 100, [-10, 10], [-50, 50], is_angle=True)
         # TODO identify good particle filter parameters
         self.pf = particle_filter.ParticleFilter(self.mapJ, 1000, 0.06, 0.15, 0.2)
-
+        self.pidDistance = pid_controller.PIDController(1000, 0, 50, [0, 0], [-200, 200], is_angle=False)
         self.joint_angles = np.zeros(7)
 
     def sleep(self, time_in_sec):
@@ -84,6 +85,40 @@ class Run:
             self.sleep(0.01)
         self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
 
+    def go_to_goal(self, goal_x, goal_y):
+        old_x = self.odometry.x
+        old_y = self.odometry.y
+        old_theta = self.odometry.theta
+        while math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2)) > 0.1:
+            goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
+            output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
+            distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
+            output_distance = self.pidDistance.update(0, distance, self.time.time())
+            self.create.drive_direct(int(output_theta + output_distance), int(-output_theta + output_distance))
+            self.sleep(0.01)
+        self.create.drive_direct(0, 0)
+        self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
+
+
+    def take_measurements(self):
+        angle = -90
+        while angle <= 90:
+            self.servo.go_to(angle)
+            self.time.sleep(2.0)
+            distance = self.sonar.get_distance()
+            #print(distance)
+            self.pf.measure(distance, math.radians(angle))
+            #self.pf._map.draw(self.pf, "test{}.png".format(self._pos))
+            x, y, theta = self.pf.get_estimate()
+            self.virtual_create.set_pose((x, y, 0.1), theta)
+    
+            data = []
+            for particle in self.pf._particles:
+                data.extend([particle.x, particle.y, 0.1, particle.theta])
+    
+            angle += 45
+            #self._pos += 1
+
     def visualize(self):
         x, y, theta = self.pf.get_estimate()
         self.virtual_create.set_pose((x, y, 0.1), theta)
@@ -94,7 +129,7 @@ class Run:
 
     def run(self):
         
-        print(self.create.sim_get_position())
+        #print(self.create.sim_get_position())
 
         startCoords = self.create.sim_get_position()
         start_x = startCoords[0]*100
@@ -133,19 +168,25 @@ class Run:
             goal_x = p.state[0] / 100.0
             goal_y = 3.0 - p.state[1] / 100.0
             print("goal x y: ", goal_x, goal_y)
-            while True:
-                state = self.create.update()
-                if state is not None:
-                    self.odometry.update(state.leftEncoderCounts, state.rightEncoderCounts)
-                    goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
-                    theta = math.atan2(math.sin(self.odometry.theta), math.cos(self.odometry.theta))
-                    output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
-                    self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
-                    # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
+             # taken from lab 8&9 solution
+            self.visualize()
+            # self.pf._pos = 0
+            self.take_measurements()
+            self.go_to_goal(goal_x, goal_y)
+            # self.take_measurements()
+            # while True:
+            #     state = self.create.update()
+            #     if state is not None:
+            #         self.odometry.update(state.leftEncoderCounts, state.rightEncoderCounts)
+            #         goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
+            #         theta = math.atan2(math.sin(self.odometry.theta), math.cos(self.odometry.theta))
+            #         output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
+            #         self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
+            #         # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
 
-                    distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
-                    if distance < 0.05:
-                        break
+            #         distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
+            #         if distance < 0.05:
+            #             break
 
 
 
