@@ -51,3 +51,9 @@ class KukaLBR4PlusVrep:
         vrep.simxSetFloatSignal(self._clientID, "paintingColorG", g, vrep.simx_opmode_oneshot_wait)
         vrep.simxSetFloatSignal(self._clientID, "paintingColorB", b, vrep.simx_opmode_oneshot_wait)
         vrep.simxSetIntegerSignal(self._clientID, "paintingUpdate", 1, vrep.simx_opmode_oneshot_wait)
+        
+    def close_gripper(self):
+        vrep.simxSetIntegerSignal(self._clientID, 'P_Grip_straight_motor', 1, vrep.simx_opmode_oneshot_wait)
+
+    def open_gripper(self):
+        vrep.simxSetIntegerSignal(self._clientID, 'P_Grip_straight_motor', 0, vrep.simx_opmode_oneshot_wait)

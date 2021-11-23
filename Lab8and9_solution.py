@@ -146,7 +146,7 @@ class Run:
 
             # self.time.sleep(0.01)        
 
-        self._pos = 0
+        self.pf._pos = 0
         self.take_measurements()
         self.go_to_goal(0.5, 0.5)
         self.take_measurements()

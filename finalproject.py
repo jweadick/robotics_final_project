@@ -8,8 +8,6 @@ import particle_filter
 import rrt
 import numpy as np
 
-
-
 class Run:
     def __init__(self, factory):
         """Constructor.
@@ -30,10 +28,45 @@ class Run:
 
         # TODO identify good PID controller gains
         self.pidTheta = pid_controller.PIDController(200, 0, 100, [-10, 10], [-50, 50], is_angle=True)
+        self.pidDistance = pid_controller.PIDController(1000, 0, 50, [0, 0], [-200, 200], is_angle=False)
         # TODO identify good particle filter parameters
         self.pf = particle_filter.ParticleFilter(self.mapJ, 1000, 0.06, 0.15, 0.2)
 
         self.joint_angles = np.zeros(7)
+
+    def take_measurements(self):
+        angle = -90
+        while angle <= 90:
+            self.servo.go_to(angle)
+            self.time.sleep(2.0)
+            distance = self.sonar.get_distance()
+            #print(distance)
+            self.pf.measure(distance, math.radians(angle))
+            #self.map.draw.line(self.pf, "test{}.png".format(self._pos)) #mapJ? broken
+            x, y, theta = self.pf.get_estimate()
+            self.virtual_create.set_pose((x, y, 0.1), theta)
+    
+            data = []
+            for particle in self.pf._particles:
+                data.extend([particle.x, particle.y, 0.1, particle.theta])
+    
+            angle += 45
+            #self._pos += 1
+
+    def go_to_goal(self, goal_x, goal_y):
+        old_x = self.odometry.x
+        old_y = self.odometry.y
+        old_theta = self.odometry.theta
+        while math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2)) > 0.1:
+            goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
+            output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
+            distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
+            output_distance = self.pidDistance.update(0, distance, self.time.time())
+            self.create.drive_direct(int(output_theta + output_distance), int(-output_theta + output_distance))
+            self.sleep(0.01)
+        self.create.drive_direct(0, 0)
+        self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
+
 
     def sleep(self, time_in_sec):
         """Sleeps for the specified amount of time while keeping odometry up-to-date
@@ -92,54 +125,103 @@ class Run:
             data.extend([particle.x, particle.y, 0.1, particle.theta])
         self.virtual_create.set_point_cloud(data)
 
+        
     def run(self):
+
+        # find a path
+
+        #rrt
+        print("init position:", self.create.sim_get_position())
+        self.rrt.build(self.create.sim_get_position(), 500, 10) #todo put back to 3000
+        x_goal = self.rrt.nearest_neighbor((1.6, 2.5)) #actual 1.6, 3.4
+        path = self.rrt.shortest_path(x_goal)
+
+        print("length of path", len(path))
+        for v in self.rrt.T:
+            for u in v.neighbors:
+                self.map.draw_line((v.state[0], v.state[1]), (u.state[0], u.state[1]), (0,0,0))
+        for idx in range(0, len(path)-1):
+            self.map.draw_line((path[idx].state[0], path[idx].state[1]), (path[idx+1].state[0], path[idx+1].state[1]), (0,255,0))
+
+        self.map.save("labFinal_rrt.png")
+
         self.create.start()
         self.create.safe()
 
-        self.create.drive_direct(0, 0)
+        #self.create.drive_direct(0, 0)
 
-        self.arm.open_gripper()
-
-        self.time.sleep(4)
-
+        #self.arm.open_gripper()
+        #self.time.sleep(4)
+        
         #self.arm.close_gripper()
 
         # request sensors
         self.create.start_stream([
-            pyCreate2.Sensor.LeftEncoderCounts,
-            pyCreate2.Sensor.RightEncoderCounts,
+            create2.Sensor.LeftEncoderCounts,
+            create2.Sensor.RightEncoderCounts,
         ])
-        self.visualize()
-        self.virtual_create.enable_buttons()
-        self.visualize()
-		
-        self.arm.go_to(4, math.radians(-90))
-        self.time.sleep(4)
 
-        while True:
-            b = self.virtual_create.get_last_button()
-            if b == self.virtual_create.Button.MoveForward:
-                self.forward()
-                self.visualize()
-            elif b == self.virtual_create.Button.TurnLeft:
-                self.go_to_angle(self.odometry.theta + math.pi / 2)
-                self.visualize()
-            elif b == self.virtual_create.Button.TurnRight:
-                self.go_to_angle(self.odometry.theta - math.pi / 2)
-                self.visualize()
-            elif b == self.virtual_create.Button.Sense:
-                distance = self.sonar.get_distance()
-                print(distance)
-                self.pf.measure(distance, 0)
-                self.visualize()
+        self.take_measurements()
+       
+        self.odometry.x = 2.7
+        self.odometry.y = 0.33
+        self.odometry.theta = math.pi / 2
+        base_speed = 100
+
+        for p in path:
+            goal_x = p.state[0] / 100.0
+            goal_y = 3.35 - p.state[1] / 100.0
+            #print(goal_x, goal_y)
+            while True:
+                state = self.create.update()
+                if state is not None:
+                    self.odometry.update(state.leftEncoderCounts, state.rightEncoderCounts)
+                    goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
+                    theta = math.atan2(math.sin(self.odometry.theta), math.cos(self.odometry.theta))
+                    output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
+                    self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
+                    # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
+
+                    distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
+                    if distance < 0.05:
+                        break
+
+        #rrt  end
+        #self.visualize()
+        #self.virtual_create.enable_buttons()
+        #self.visualize()
+        
+
+        # self._pos = 0
+        # self.take_measurements()
+        # self.go_to_goal(1.6, 3.4)
+        # self.take_measurements()
+        # print("Sim Position:", self.create.sim_get_position())
+        # self.arm.go_to(4, math.radians(-90))
+        # while True:
+        #     b = self.virtual_create.get_last_button()
+        #     if b == self.virtual_create.Button.MoveForward:
+        #         self.forward()
+        #         self.visualize()
+        #     elif b == self.virtual_create.Button.TurnLeft:
+        #         self.go_to_angle(self.odometry.theta + math.pi / 2)
+        #         self.visualize()
+        #     elif b == self.virtual_create.Button.TurnRight:
+        #         self.go_to_angle(self.odometry.theta - math.pi / 2)
+        #         self.visualize()
+        #     elif b == self.virtual_create.Button.Sense:
+        #         distance = self.sonar.get_distance()
+        #         print(distance)
+        #         self.pf.measure(distance, 0)
+        #         self.visualize()
 				
-            #posC = self.create.sim_get_position()
+        #     #posC = self.create.sim_get_position()
 				
-            #print(posC)
+        #     #print(posC)
 			
-            self.arm.go_to(4, math.radians(-90))
-            self.arm.go_to(5, math.radians(90))
-            self.time.sleep(100)
+        #     self.arm.go_to(4, math.radians(-90))
+        #     self.arm.go_to(5, math.radians(90))
+        #     self.time.sleep(100)
 
 
-            self.time.sleep(0.01)
+        #self.time.sleep(0.01)
